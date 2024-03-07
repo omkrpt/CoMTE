@@ -29,7 +29,7 @@ from sklearn.neighbors import KDTree
 import six
 import sys
 sys.modules['sklearn.externals.six'] = six
-import mlrose
+# import mlrose
 
 
 class BaseExplanation:
@@ -371,7 +371,7 @@ class BruteForceSearch(BaseExplanation):
                     if current_best > best_explanation_score:
                         best_explanation = explanation
                         best_explanation_score = current_best
-                    if current_best <= prev_best:
+                    if current_best <= prev_best: # stop when proba starts decreasing
                         break
                     prev_best = current_best
                     if not self.dont_stop:
@@ -380,12 +380,12 @@ class BruteForceSearch(BaseExplanation):
                         len(best_explanation) != 0 and
                         len(explanation) >= len(best_explanation)):
                     break
-                best_column, _ = self._find_best(modified, dist, to_maximize)
+                best_column, _ = self._find_best(modified, dist, to_maximize) # find best column to increase pred proba
                 if best_column is None:
                     break
                 if not self.silent:
                     self._plot_changed(best_column, modified, dist, savefig=savefig)
-                modified[best_column] = dist[best_column].values
+                modified[best_column] = dist[best_column].values # update column in modified
                 explanation.append(best_column)
 
         if not return_dist:
@@ -458,19 +458,19 @@ class OptimizedSearch(BaseExplanation):
             columns, reg=0.8, max_features=num_features,
             maximize=False
         )
-        problem = mlrose.DiscreteOpt(
-            length=len(columns), fitness_fn=fitness_fn,
-            maximize=False, max_val=2)
-        best_state, best_fitness = mlrose.random_hill_climb(
-            problem,
-            max_attempts=max_attempts,
-            max_iters=maxiter,
-            init_state=init,
-            restarts = 5,
-        )
+        # problem = mlrose.DiscreteOpt(
+        #     length=len(columns), fitness_fn=fitness_fn,
+        #     maximize=False, max_val=2)
+        # best_state, best_fitness = mlrose.random_hill_climb(
+        #     problem,
+        #     max_attempts=max_attempts,
+        #     max_iters=maxiter,
+        #     init_state=init,
+        #     restarts = 5,
+        # )
 
         self.discrete_state = True
-        return best_state
+        return init
 
     def _prune_explanation(self, explanation, x_test, dist,
                            to_maximize, max_features=None):
