@@ -87,11 +87,11 @@ class BaseExplanation:
     def _plot_changed(self, metric, original, distractor, savefig=False):
         fig = plt.figure(figsize=(6,3))
         ax = fig.gca()
-        plt.plot(range(distractor.shape[0]),
+        plt.plot(range(-distractor.shape[0], 0),
                  original[metric].values, label='x$_{test}$',
                  figure=fig,
                  )
-        plt.plot(range(distractor.shape[0]),
+        plt.plot(range(-distractor.shape[0], 0),
                  distractor[metric].values, label='Distractor',
                  figure=fig)
         ax.set_ylabel(metric)
