@@ -57,36 +57,6 @@ def get_dataset(set_name, binary=False, window_size = 10, exclude_columns=[], **
         kwargs['windowize'] = False
     return load_hpc_data(rootdir / set_name, **kwargs)
 
-
-def windowize(timeseries, labels, window=45, trim=60, skip=15, test=False):
-    result_labels = []
-    result_timeseries = []
-    node_ids = labels.index.get_level_values('node_id').unique()
-    if test:
-        node_ids = random.sample(list(node_ids), 100)
-    for node_id in tqdm(node_ids):
-        subset = timeseries.loc[[node_id], :, :].dropna()
-        temp = []
-        temp_labels = []
-        for i in range(len(subset.iloc[trim:-trim])):
-            if i < window:
-                continue
-            elif i % skip != 0:
-                continue
-            data = subset.iloc[i - window: i]
-            data.index = data.index.set_levels(
-                data.index.levels[0] + '_{}'.format(i), level=0)
-            temp.append(data)
-            label = labels.loc[[node_id], :, :]
-            label.index = label.index.set_levels(
-                label.index.levels[0] + '_{}'.format(i), level=0)
-            temp_labels.append(label)
-        result_timeseries.append(pd.concat(temp, axis=0))
-        result_labels.append(pd.concat(temp_labels, axis=0))
-    return (pd.concat(result_timeseries, axis=0),
-            pd.concat(result_labels, axis=0))
-
-
 def drop_columns(timeseries):
     return timeseries.drop(
         [x for x in timeseries.columns
@@ -106,8 +76,6 @@ def process_data(timeseries, labels, classes=None, **kwargs):
     timeseries, labels = select_classes(timeseries, labels, classes=classes)
     timeseries = timeseries.dropna(axis=0)
     assert(not timeseries.isnull().any().any())
-    # if kwargs.get('windowize', True):
-    #     return windowize(timeseries, labels, **kwargs)
     return timeseries, labels
 
 
@@ -175,43 +143,10 @@ def load_hpc_data(data_folder, make_binary=False, for_autoencoder=False, **kwarg
 
     return timeseries, labels, test_timeseries, test_labels
 
-def read_csv_wrapper(root_dir, pattern="F*.csv", **kwargs):
-    data = {'train': [], 'test': [], 'labels_train': [], 'labels_test': []}
-
-    for file_path in glob(os.path.join(root_dir, pattern)):
-        file_name = os.path.basename(file_path)
-        label = int(file_name.split('_')[0][1])  # Extracting the label (F1, F2, ..., F9) as integer
-        data_type = 'train' if 'train' in file_name else 'test'
-
-        df = pd.read_csv(file_path)
-
-        df.index = pd.MultiIndex.from_product([['node_{}'.format(label)], df.index], names=['node_id', 'timestamp'])
-        data[data_type].append(df)
-
-    train_df = pd.concat(data['train'])
-    test_df = pd.concat(data['test'])
-
-    train_labels_df = pd.read_csv('./data/CSTR1/labels.csv')
-    train_labels_df['label'].map(str)
-    train_labels_df = train_labels_df.set_index('node_id')
-    train_labels_df.index = pd.MultiIndex.from_product([train_labels_df.index, [0]], names=['node_id', 'timestamp'])
-
-    test_labels_df = pd.read_csv('./data/CSTR1/labels.csv')
-    test_labels_df['label'].map(str)
-    test_labels_df = test_labels_df.set_index('node_id')
-    test_labels_df.index = pd.MultiIndex.from_product([test_labels_df.index, [0]], names=['node_id', 'timestamp'])
-
-
-    timeseries, labels = process_data(train_df, train_labels_df, **kwargs)
-    test_timeseries, test_labels = process_data(test_df, test_labels_df, **kwargs)
-    
-    return timeseries, labels, test_timeseries, test_labels
-
 def get_dataset_csv(set_name, exclude_columns, window_size, **kwargs):
     pattern = kwargs.get('pattern', "*.csv")
     root_dir = kwargs.get('rootdir', './data/' + set_name)
-    # train_data, train_labels, test_data, test_labels = read_csv_wrapper(root_dir, pattern, **kwargs)
-    train_data, train_labels, test_data, test_labels = windowize_and_split(root_dir, pattern, exclude_columns, window_size, **kwargs)
+    train_data, train_labels, test_data, test_labels = preprocess_data(root_dir, pattern, exclude_columns, window_size, **kwargs)
     return train_data, train_labels, test_data, test_labels
 
 def add_noise(ts, noise_scale):
@@ -228,12 +163,30 @@ def add_noise(ts, noise_scale):
             noisy_df[column] += noise
     return noisy_df
 
-def windowize_and_split(root_dir, pattern="*.csv",  exclude_columns = [], window_size=5, noise_scale=0, use_classes=None,
+def windowize(ts_df, window_size, node_offset = 0):
+    windowized_ts = []
+
+    for node_number in range(len(ts_df)):
+        ts = ts_df[node_number]
+        ts_window_temp = []
+        node_number = node_number + node_offset
+
+        for i in range(window_size, len(ts)):
+            ts_window_temp = ts.iloc[i - window_size:i].copy()
+            new_node_id = 'node_{}_{}'.format(node_number+1,i)
+            ts_window_temp.index = pd.MultiIndex.from_product([[new_node_id], ts_window_temp['Timestamp']], names=['node_id', 'timestamp'])
+            windowized_ts.append(ts_window_temp)
+
+    windowized_df = pd.concat(windowized_ts)
+    return windowized_df
+
+def preprocess_data(root_dir, pattern="*.csv",  exclude_columns = [], window_size=5, noise_scale=0, use_classes=None,
                   **kwargs):
     
-    data = {'train': [], 'test': [], 'labels_train': [], 'labels_test': []}
+    data = {'train': [], 'test': []}
 
     for file_path in glob(os.path.join(root_dir, pattern)):
+        
         file_name = os.path.basename(file_path)
         if 'train' in file_name:
             data_type = 'train'
@@ -241,27 +194,15 @@ def windowize_and_split(root_dir, pattern="*.csv",  exclude_columns = [], window
             data_type = 'test'
         else:
             continue
-        file_number = int(re.split('\_|\.',file_name)[1]) 
 
-        if data_type == 'train':
-            file_number += 100
         ts = pd.read_csv(file_path)
-
         ts.drop(columns=exclude_columns, inplace=True)
         ts = add_noise(ts, noise_scale)
-        
-        windows_train = []
-        ts_window_temp = []
 
-        for i in range(window_size, len(ts)):
-            windows_train.append(ts.iloc[i - window_size:i].values.flatten())
-            ts_window_temp = ts.iloc[i - window_size:i].copy()
-            new_node_id = 'node_{}_{}'.format(file_number,i)
-            ts_window_temp.index = pd.MultiIndex.from_product([[new_node_id], ts_window_temp['Timestamp']], names=['node_id', 'timestamp'])
-            data[data_type].append(ts_window_temp)
+        data[data_type].append(ts)
 
-    train_df = pd.concat(data['train'])
-    test_df = pd.concat(data['test'])
+    train_df = windowize_new(data['train'], window_size, 100)
+    test_df = windowize_new(data['test'], window_size, 0)
 
     train_labels_df = train_df.groupby(level='node_id').agg({'label': 'last'})
     train_labels_df.index = pd.MultiIndex.from_product([train_labels_df.index, [0]], names=['node_id', 'timestamp'])
