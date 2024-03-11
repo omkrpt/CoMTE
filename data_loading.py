@@ -201,8 +201,8 @@ def preprocess_data(root_dir, pattern="*.csv",  exclude_columns = [], window_siz
 
         data[data_type].append(ts)
 
-    train_df = windowize_new(data['train'], window_size, 100)
-    test_df = windowize_new(data['test'], window_size, 0)
+    train_df = windowize(data['train'], window_size, 100)
+    test_df = windowize(data['test'], window_size, 0)
 
     train_labels_df = train_df.groupby(level='node_id').agg({'label': 'last'})
     train_labels_df.index = pd.MultiIndex.from_product([train_labels_df.index, [0]], names=['node_id', 'timestamp'])
