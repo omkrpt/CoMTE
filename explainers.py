@@ -103,6 +103,25 @@ class BaseExplanation:
             logging.info("Saved the figure to %s", filename)
         fig.show()
 
+    def _plot_changed2(self, metric, original, distractor, savefig=False):
+        fig = plt.figure(figsize=(6,3))
+        ax = fig.gca()
+        plt.plot(range(1-distractor.shape[0], 1),
+                 original[metric].values, label='Fault',
+                 figure=fig)
+        plt.plot(range(1, distractor.shape[0]+1),
+                 distractor[metric].values, label='Normal',
+                 figure=fig)
+        plt.xticks(np.arange(1-distractor.shape[0], distractor.shape[0], step=1), rotation=45)
+        ax.set_ylabel(metric)
+        ax.set_xlabel('Time (s)')
+        ax.legend()
+        if savefig:
+            filename = "{}.pdf".format(uuid.uuid4())
+            fig.savefig(filename, bbox_inches='tight')
+            logging.info("Saved the figure to %s", filename)
+        fig.show()
+
     def construct_per_class_trees(self):
         """Used to choose distractors"""
         if self.per_class_trees is not None:
@@ -154,6 +173,96 @@ class BaseExplanation:
                 x.index.get_level_values('node_id').unique().values[0]
                 for x in distractors])
         return distractors
+
+    def _get_recourse_distractors(self, x_test, to_maximize, n_distractors=2):
+        # self.construct_per_class_trees()
+        # to_maximize can be int, string or np.int64
+
+        if isinstance(to_maximize, numbers.Integral):
+            to_maximize = self.clf.classes_[to_maximize]
+        
+        min_dist = 100
+        distractors = []
+
+        for node, group in self.labels.groupby(level=['node_id','timestamp']):
+            if group['label'][0] == to_maximize:
+                distractor = self.timeseries.loc[(node[0], slice(None)),:]
+                distance = np.linalg.norm(distractor.iloc[0] - x_test.iloc[-1])
+                if(distance < min_dist):
+                    min_dist = distance
+                    min_dist_node = node[0]
+                    logging.info("Min dist:%s Min dist node:%s", min_dist, min_dist_node)
+        distractor = self.timeseries.loc[(min_dist_node, slice(None)),:]
+        distractors.append(distractor)
+
+        if not self.silent:
+            logging.info("Returning distractors %s", [
+                x.index.get_level_values('node_id').unique().values[0]
+                for x in distractors])
+        for column in x_test.columns:
+            self._plot_changed2(column, x_test, distractor, savefig=False)
+        # self._pred_dist(distractor)
+        return distractors
+    
+    def _pred_dist(self, test_timeseries):
+        WINDOW_SIZE = self.window_size
+        preds = self.clf.predict(test_timeseries)
+        print(preds)
+        comparison_df=pd.DataFrame(preds)
+        # comparison_df['pred_label'] = preds
+        comparison_df['ind_node'] = ([int(element.split('_')[1]) for element in comparison_df.index.get_level_values('node_id')])
+        comparison_df['ind_time'] = ([int(element.split('_')[2]) for element in comparison_df.index.get_level_values('node_id')])
+        comparison_df.set_index(['ind_node', 'ind_time'], inplace=True)
+        label_dict = {'1': 'F1, Catalyst deactivation', '2': 'F2, Heat-exchanger fouling', '3': 'F3, Dead-coolant flow measurement', '4': 'F4, Bias in reactor temperature measurement', '5': 'F5, Coolant valve stiction qF7', '6': 'F6, Step change in QF', '7': 'F7, Ramp change in CAF', '8': 'F8, Ramp change in TF', '9': 'F9, Ramp change in TCF', '0': 'N, Normal operation'}
+
+        # warnings.filterwarnings("ignore")
+
+        for i in range(1,2):
+            # print(comparison_df)
+            single_node_df = comparison_df.loc[comparison_df.index.get_level_values('ind_node') == i]
+            single_node_df = single_node_df.reset_index(level='ind_node', drop=True)
+            single_node_df = single_node_df.sort_index()
+
+            # print(single_node_df)
+            # plt.figure(figsize=(20, 2))
+
+
+        # Plot prediction probability
+            pred_ar = []
+            for j in range(WINDOW_SIZE,100):
+                loca = "node_{}_{}".format(i,j)
+                predi = self.pipeline.predict_proba(test_timeseries.loc[[loca], :, :])
+                pred_ar.append(predi[0])
+            pred_df = pd.DataFrame(pred_ar, index=range(WINDOW_SIZE,100))
+            # print(pred_df)
+
+            pred_df.plot(figsize=(10, 3))
+            plt.title("Prediction Probability for F{}".format(i))
+            plt.xlabel('Time')
+            plt.ylabel('Probability')
+            plt.grid(True)
+            plt.legend(loc='upper left')
+            plt.yticks(np.arange(0, 1.1, step=0.1))
+            plt.xticks(np.arange(WINDOW_SIZE, len(single_node_df), step=1), rotation=45)
+            plt.xlim(single_node_df.index[5], single_node_df.index[45])
+            plt.tight_layout()
+            plt.show()
+
+
+            single_node_df.plot(figsize=(10, 3))
+
+            plt.title(label_dict[str(i)])
+            plt.xlabel('Time')
+            plt.ylabel('Class')
+            plt.grid(True)
+            plt.legend(loc='upper left')
+            plt.yticks(np.arange(0, 10, step=1))
+            plt.xticks(np.arange(WINDOW_SIZE, len(single_node_df), step=1), rotation=45)
+            plt.xlim(single_node_df.index[5], single_node_df.index[45])
+            plt.tight_layout()
+            plt.show()
+
+        # warnings.resetwarnings()
 
     def local_lipschitz_estimate(
             self, x, optim='gp', eps=None, bound_type='box', clip=True,
@@ -350,7 +459,9 @@ class BruteForceSearch(BaseExplanation):
         if not self.silent:
             logging.info("Working on turning label from %s to %s",
                          orig_label, to_maximize)
-        distractors = self._get_distractors(
+        # distractors = self._get_distractors(
+        #     x_test, to_maximize, n_distractors=self.num_distractors)
+        distractors = self._get_recourse_distractors(
             x_test, to_maximize, n_distractors=self.num_distractors)
         best_explanation = set()
         best_explanation_score = 0
