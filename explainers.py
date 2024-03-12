@@ -260,31 +260,10 @@ class BruteForceSearch(BaseExplanation):
         distractors = self._get_recourse_distractors(
             x_test, to_maximize, n_distractors=self.num_distractors)
                 
-        new_ts = []
-        new_ts.append(x_test)
-        new_ts.append(distractors[0])
-        new_df = pd.concat(new_ts)
-        start_time = x_test.index.get_level_values('timestamp')[0]
-        new_df['Timestamp'] = range(start_time, start_time + new_df.shape[0])
-        # new_df.set_index(['Timestamp'], inplace=True)
-        new_df = new_df.reset_index()
-        new_df.drop(columns=['node_id',  'timestamp'], inplace=True)
-        # new_df.index = pd.MultiIndex.from_product(
-        #     [[x_test.index.get_level_values('node_id').values[0]], new_df['t']], names=['node_id', 'timestamp'])
-        new_df['label'] = 0
-
-        new_ts_set = []
-        new_ts_set.append(new_df)
-        proto_df = data_loading.windowize(new_ts_set, self.window_size)
-        # proto_df.drop(columns=['Timestamp'], inplace=True)
-
-        proto_labels_df = proto_df.groupby(level='node_id').agg({'label': 'last'})
-        proto_labels_df.index = pd.MultiIndex.from_product([proto_labels_df.index, [0]], names=['node_id', 'timestamp'])
-
-        proto_df.drop(columns=['Timestamp', 'label'], inplace=True)
-
-        proto_ts, proto_labels = data_loading.process_data(proto_df, proto_labels_df)
-        # self._pred_dist(distractor)
+        combined_ts_df = data_loading.concat_ts(x_test, distractors[0])
+        ts_list = []
+        ts_list.append(combined_ts_df)
+        proto_ts, proto_labels = data_loading.windowize_and_process(ts_list, self.window_size)
         return proto_ts, proto_labels
 
     def explain(self, x_test, to_maximize=None, num_features=10,return_dist=False, savefig=False):

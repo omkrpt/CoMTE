@@ -111,18 +111,31 @@ def preprocess_data(root_dir, pattern="*.csv",  exclude_columns = [], window_siz
 
         data[data_type].append(ts)
 
-    train_df = windowize(data['train'], window_size, 100)
-    test_df = windowize(data['test'], window_size, 0)
-
-    train_labels_df = train_df.groupby(level='node_id').agg({'label': 'last'})
-    train_labels_df.index = pd.MultiIndex.from_product([train_labels_df.index, [0]], names=['node_id', 'timestamp'])
-    test_labels_df = test_df.groupby(level='node_id').agg({'label': 'last'})
-    test_labels_df.index = pd.MultiIndex.from_product([test_labels_df.index, [0]], names=['node_id', 'timestamp'])
-
-    train_df.drop(columns=['Timestamp', 'label'], inplace=True)
-    test_df.drop(columns=['Timestamp', 'label'], inplace=True)
-
-    train_ts, train_labels = process_data(train_df, train_labels_df, use_classes)
-    test_ts, test_labels = process_data(test_df, test_labels_df, use_classes)
+    train_ts, train_labels = windowize_and_process(data['train'], window_size, 100)
+    test_ts, test_labels = windowize_and_process(data['test'], window_size, 0)
 
     return train_ts, train_labels, test_ts, test_labels
+
+def windowize_and_process(ts_list, window_size, node_offset = 0):
+    ts_df = windowize(ts_list, window_size, node_offset)
+
+    ts_labels_df = ts_df.groupby(level='node_id').agg({'label': 'last'})
+    ts_labels_df.index = pd.MultiIndex.from_product([ts_labels_df.index, [0]], names=['node_id', 'timestamp'])
+
+    ts_df.drop(columns=['Timestamp', 'label'], inplace=True)
+
+    ts_processed_df, ts_processed_labels_df = process_data(ts_df, ts_labels_df)
+    return ts_processed_df, ts_processed_labels_df
+
+def concat_ts(first_df, second_df):
+    combined_ts = []
+    combined_ts.append(first_df)
+    combined_ts.append(second_df)
+    combined_ts_df = pd.concat(combined_ts)
+    start_time = first_df.index.get_level_values('timestamp')[0]
+    combined_ts_df['Timestamp'] = range(start_time, start_time + combined_ts_df.shape[0])
+    combined_ts_df = combined_ts_df.reset_index()
+    combined_ts_df.drop(columns=['node_id',  'timestamp'], inplace=True)
+    if not combined_ts_df.columns.__contains__('label'):
+        combined_ts_df['label'] = 0
+    return combined_ts_df
