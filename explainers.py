@@ -31,6 +31,7 @@ import sys
 sys.modules['sklearn.externals.six'] = six
 # import mlrose
 
+import data_loading
 
 class BaseExplanation:
     def __init__(self, clf, timeseries, labels, silent=True,
@@ -201,8 +202,33 @@ class BaseExplanation:
                 for x in distractors])
         for column in x_test.columns:
             self._plot_changed2(column, x_test, distractor, savefig=False)
+        
+        new_ts = []
+        new_ts.append(x_test)
+        new_ts.append(distractor)
+        new_df = pd.concat(new_ts)
+        start_time = x_test.index.get_level_values('timestamp')[0]
+        new_df['Timestamp'] = range(start_time, start_time + new_df.shape[0])
+        # new_df.set_index(['Timestamp'], inplace=True)
+        new_df = new_df.reset_index()
+        new_df.drop(columns=['node_id',  'timestamp'], inplace=True)
+        # new_df.index = pd.MultiIndex.from_product(
+        #     [[x_test.index.get_level_values('node_id').values[0]], new_df['t']], names=['node_id', 'timestamp'])
+        new_df['label'] = 0
+
+        new_ts_set = []
+        new_ts_set.append(new_df)
+        proto_df = data_loading.windowize(new_ts_set, self.window_size)
+        # proto_df.drop(columns=['Timestamp'], inplace=True)
+
+        proto_labels_df = proto_df.groupby(level='node_id').agg({'label': 'last'})
+        proto_labels_df.index = pd.MultiIndex.from_product([proto_labels_df.index, [0]], names=['node_id', 'timestamp'])
+
+        proto_df.drop(columns=['Timestamp', 'label'], inplace=True)
+
+        proto_ts, proto_labels = data_loading.process_data(proto_df, proto_labels_df)
         # self._pred_dist(distractor)
-        return distractors
+        return distractors, proto_ts, proto_labels
     
     def _pred_dist(self, test_timeseries):
         WINDOW_SIZE = self.window_size
@@ -461,7 +487,7 @@ class BruteForceSearch(BaseExplanation):
                          orig_label, to_maximize)
         # distractors = self._get_distractors(
         #     x_test, to_maximize, n_distractors=self.num_distractors)
-        distractors = self._get_recourse_distractors(
+        distractors, proto_ts, proto_labels = self._get_recourse_distractors(
             x_test, to_maximize, n_distractors=self.num_distractors)
         best_explanation = set()
         best_explanation_score = 0
@@ -500,7 +526,7 @@ class BruteForceSearch(BaseExplanation):
                 explanation.append(best_column)
 
         if not return_dist:
-            return explanation
+            return explanation, proto_ts, proto_labels
         else:
             return explanation, best_dist
 

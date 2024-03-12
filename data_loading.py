@@ -73,11 +73,11 @@ def add_noise(ts, noise_scale):
             noisy_df[column] += noise
     return noisy_df
 
-def windowize(ts_df, window_size, node_offset = 0):
+def windowize(ts_list, window_size, node_offset = 0):
     windowized_ts = []
 
-    for node_number in range(len(ts_df)):
-        ts = ts_df[node_number]
+    for node_number in range(len(ts_list)):
+        ts = ts_list[node_number]
         ts_window_temp = []
         node_number = node_number + node_offset
 
