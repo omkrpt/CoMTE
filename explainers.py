@@ -15,21 +15,17 @@ Energy’s National Nuclear Security Administration under Contract DENA0003525.
 """
 
 import logging
-import random
 import numbers
 import multiprocessing
 import uuid
 
-from skopt import gp_minimize, gbrt_minimize
 import matplotlib.pyplot as plt
 import pandas as pd
 import numpy as np
 from sklearn.neighbors import KDTree
-#Workaround for mlrose package
-import six
-import sys
-sys.modules['sklearn.externals.six'] = six
-# import mlrose
+# import six
+# import sys
+# sys.modules['sklearn.externals.six'] = six
 
 import data_loading
 
@@ -202,236 +198,11 @@ class BaseExplanation:
                 for x in distractors])
         for column in x_test.columns:
             self._plot_changed2(column, x_test, distractor, savefig=False)
-        
-        new_ts = []
-        new_ts.append(x_test)
-        new_ts.append(distractor)
-        new_df = pd.concat(new_ts)
-        start_time = x_test.index.get_level_values('timestamp')[0]
-        new_df['Timestamp'] = range(start_time, start_time + new_df.shape[0])
-        # new_df.set_index(['Timestamp'], inplace=True)
-        new_df = new_df.reset_index()
-        new_df.drop(columns=['node_id',  'timestamp'], inplace=True)
-        # new_df.index = pd.MultiIndex.from_product(
-        #     [[x_test.index.get_level_values('node_id').values[0]], new_df['t']], names=['node_id', 'timestamp'])
-        new_df['label'] = 0
-
-        new_ts_set = []
-        new_ts_set.append(new_df)
-        proto_df = data_loading.windowize(new_ts_set, self.window_size)
-        # proto_df.drop(columns=['Timestamp'], inplace=True)
-
-        proto_labels_df = proto_df.groupby(level='node_id').agg({'label': 'last'})
-        proto_labels_df.index = pd.MultiIndex.from_product([proto_labels_df.index, [0]], names=['node_id', 'timestamp'])
-
-        proto_df.drop(columns=['Timestamp', 'label'], inplace=True)
-
-        proto_ts, proto_labels = data_loading.process_data(proto_df, proto_labels_df)
-        # self._pred_dist(distractor)
-        return distractors, proto_ts, proto_labels
-    
-    def _pred_dist(self, test_timeseries):
-        WINDOW_SIZE = self.window_size
-        preds = self.clf.predict(test_timeseries)
-        print(preds)
-        comparison_df=pd.DataFrame(preds)
-        # comparison_df['pred_label'] = preds
-        comparison_df['ind_node'] = ([int(element.split('_')[1]) for element in comparison_df.index.get_level_values('node_id')])
-        comparison_df['ind_time'] = ([int(element.split('_')[2]) for element in comparison_df.index.get_level_values('node_id')])
-        comparison_df.set_index(['ind_node', 'ind_time'], inplace=True)
-        label_dict = {'1': 'F1, Catalyst deactivation', '2': 'F2, Heat-exchanger fouling', '3': 'F3, Dead-coolant flow measurement', '4': 'F4, Bias in reactor temperature measurement', '5': 'F5, Coolant valve stiction qF7', '6': 'F6, Step change in QF', '7': 'F7, Ramp change in CAF', '8': 'F8, Ramp change in TF', '9': 'F9, Ramp change in TCF', '0': 'N, Normal operation'}
-
-        # warnings.filterwarnings("ignore")
-
-        for i in range(1,2):
-            # print(comparison_df)
-            single_node_df = comparison_df.loc[comparison_df.index.get_level_values('ind_node') == i]
-            single_node_df = single_node_df.reset_index(level='ind_node', drop=True)
-            single_node_df = single_node_df.sort_index()
-
-            # print(single_node_df)
-            # plt.figure(figsize=(20, 2))
-
-
-        # Plot prediction probability
-            pred_ar = []
-            for j in range(WINDOW_SIZE,100):
-                loca = "node_{}_{}".format(i,j)
-                predi = self.pipeline.predict_proba(test_timeseries.loc[[loca], :, :])
-                pred_ar.append(predi[0])
-            pred_df = pd.DataFrame(pred_ar, index=range(WINDOW_SIZE,100))
-            # print(pred_df)
-
-            pred_df.plot(figsize=(10, 3))
-            plt.title("Prediction Probability for F{}".format(i))
-            plt.xlabel('Time')
-            plt.ylabel('Probability')
-            plt.grid(True)
-            plt.legend(loc='upper left')
-            plt.yticks(np.arange(0, 1.1, step=0.1))
-            plt.xticks(np.arange(WINDOW_SIZE, len(single_node_df), step=1), rotation=45)
-            plt.xlim(single_node_df.index[5], single_node_df.index[45])
-            plt.tight_layout()
-            plt.show()
-
-
-            single_node_df.plot(figsize=(10, 3))
-
-            plt.title(label_dict[str(i)])
-            plt.xlabel('Time')
-            plt.ylabel('Class')
-            plt.grid(True)
-            plt.legend(loc='upper left')
-            plt.yticks(np.arange(0, 10, step=1))
-            plt.xticks(np.arange(WINDOW_SIZE, len(single_node_df), step=1), rotation=45)
-            plt.xlim(single_node_df.index[5], single_node_df.index[45])
-            plt.tight_layout()
-            plt.show()
-
-        # warnings.resetwarnings()
-
-    def local_lipschitz_estimate(
-            self, x, optim='gp', eps=None, bound_type='box', clip=True,
-            n_calls=100, njobs=-1, verbose=False, exp_kwargs=None,
-            n_neighbors=None):
-        """Compute one-sided lipschitz estimate for explainer.
-        Adequate for local Lipschitz, for global must have
-        the two sided version. This computes:
-
-            max_z || f(x) - f(z)|| / || x - z||
-
-        Instead of:
-
-            max_z1,z2 || f(z1) - f(z2)|| / || z1 - z2||
-
-        If n_neighbors is provided, does a local search on n closest neighbors
-
-        If eps provided, does local lipzshitz in:
-            - box of width 2*eps along each dimension if bound_type = 'box'
-            - box of width 2*eps*va, along each dimension if bound_type =
-                'box_norm' (i.e. normalize so that deviation is
-                eps % in each dim )
-            - box of width 2*eps*std along each dimension if bound_type =
-                'box_std'
-
-        max_z || f(x) - f(z)|| / || x - z||   , with f = theta
-
-        clip: clip bounds to within (min, max) of dataset
-
-        """
-        np_x = x.values.T.flatten()
-        if n_neighbors is not None and self.tree is None:
-            self.construct_tree()
-
-        # Compute bounds for optimization
-        if eps is None:
-            # If want to find global lipzhitz ratio maximizer
-            # search over "all space" - use max min bounds of dataset
-            # fold of interest
-            lwr = self.ts_min.flatten()
-            upr = self.ts_max.flatten()
-        elif bound_type == 'box':
-            lwr = (np_x - eps).flatten()
-            upr = (np_x + eps).flatten()
-        elif bound_type == 'box_std':
-            lwr = (np_x - eps * self.ts_std).flatten()
-            upr = (np_x + eps * self.ts_std).flatten()
-        if clip:
-            lwr = lwr.clip(min=self.ts_min.min())
-            upr = upr.clip(max=self.ts_max.max())
-        if exp_kwargs is None:
-            exp_kwargs = {}
-
-        consts = []
-        bounds = []
-        variable_indices = []
-        for idx, (l, u) in enumerate(zip(*[lwr, upr])):
-            if u == l:
-                consts.append(l)
-            else:
-                consts.append(None)
-                bounds.append((l, u))
-                variable_indices.append(idx)
-        consts = np.array(consts)
-        variable_indices = np.array(variable_indices)
-
-        orig_explanation = set(self.explain(x, **exp_kwargs))
-        if verbose:
-            logging.info("Original explanation: %s", orig_explanation)
-
-        def lipschitz_ratio(y):
-            nonlocal self
-            nonlocal consts
-            nonlocal variable_indices
-            nonlocal orig_explanation
-            nonlocal np_x
-            nonlocal exp_kwargs
-
-            if len(y) == len(consts):
-                # For random search
-                consts = y
-            else:
-                # Only search in variables that vary
-                np.put_along_axis(consts, variable_indices, y, axis=0)
-            df_y = pd.DataFrame(np.array(consts).reshape((len(self.metrics),
-                                                          self.window_size)).T,
-                                columns=self.metrics)
-            df_y = pd.concat([df_y], keys=['y'], names=['node_id'])
-            new_explanation = set(self.explain(df_y, **exp_kwargs))
-            # Hamming distance
-            exp_distance = len(orig_explanation.difference(new_explanation)) \
-                + len(new_explanation.difference(orig_explanation))
-            # Multiply by 1B to get a sensible number
-            ratio = exp_distance * -1e9 / np.linalg.norm(np_x - consts)
-            if verbose:
-                logging.info("Ratio: %f", ratio)
-            return ratio
-
-        # Run optimization
-        min_ratio = 0
-        worst_case = np_x
-        if n_neighbors is not None:
-            for idx in self.tree.query(np_x.reshape(1, -1),
-                                       k=n_neighbors)[1].flatten():
-                y = self.timeseries.loc[
-                    [self.node_indices[idx]], :, :].values.T.flatten()
-                ratio = lipschitz_ratio(y)
-                if ratio < min_ratio:
-                    min_ratio = ratio
-                    worst_case = y
-            if verbose:
-                logging.info("The worst case explanation was for %s", idx)
-        elif optim == 'gp':
-            logging.info('Running BlackBox Minimization with Bayesian Opt')
-            # Need minus because gp only has minimize method
-            res = gp_minimize(lipschitz_ratio, bounds, n_calls=n_calls,
-                              verbose=verbose, n_jobs=njobs)
-            min_ratio, worst_case = res['fun'], np.array(res['x'])
-        elif optim == 'gbrt':
-            logging.info('Running BlackBox Minimization with GBT')
-            res = gbrt_minimize(lipschitz_ratio, bounds, n_calls=n_calls,
-                                verbose=verbose, n_jobs=njobs)
-            min_ratio, worst_case = res['fun'], np.array(res['x'])
-        elif optim == 'random':
-            for i in range(n_calls):
-                y = (upr - lwr) * np.random.random(len(np_x)) + lwr
-                ratio = lipschitz_ratio(y)
-                if ratio < min_ratio:
-                    min_ratio = ratio
-                    worst_case = y
-
-        if len(worst_case) != len(consts):
-            np.put_along_axis(consts, variable_indices, worst_case, axis=0)
-        if verbose:
-            logging.info("Best ratio: %f, norm: %f", min_ratio,
-                         np.linalg.norm(np_x - consts))
-        return min_ratio, consts
-
+        return distractors
 
 CLASSIFIER = None
 X_TEST = None
 DISTRACTOR = None
-
 
 def _eval_one(tup):
     column, label_idx = tup
@@ -475,6 +246,47 @@ class BruteForceSearch(BaseExplanation):
                          best_column, best_case)
         return best_column, best_case
 
+
+    def get_prototype(self, x_test, to_maximize=None, num_features=10,return_dist=False, savefig=False):
+        orig_preds = self.clf.predict_proba(x_test)
+        orig_label = np.argmax(orig_preds)
+        if to_maximize is None:
+            to_maximize = np.argmin(orig_preds)
+        if orig_label == to_maximize:
+            return []
+        if not self.silent:
+            logging.info("Working on turning label from %s to %s",
+                         orig_label, to_maximize)
+        distractors = self._get_recourse_distractors(
+            x_test, to_maximize, n_distractors=self.num_distractors)
+                
+        new_ts = []
+        new_ts.append(x_test)
+        new_ts.append(distractors[0])
+        new_df = pd.concat(new_ts)
+        start_time = x_test.index.get_level_values('timestamp')[0]
+        new_df['Timestamp'] = range(start_time, start_time + new_df.shape[0])
+        # new_df.set_index(['Timestamp'], inplace=True)
+        new_df = new_df.reset_index()
+        new_df.drop(columns=['node_id',  'timestamp'], inplace=True)
+        # new_df.index = pd.MultiIndex.from_product(
+        #     [[x_test.index.get_level_values('node_id').values[0]], new_df['t']], names=['node_id', 'timestamp'])
+        new_df['label'] = 0
+
+        new_ts_set = []
+        new_ts_set.append(new_df)
+        proto_df = data_loading.windowize(new_ts_set, self.window_size)
+        # proto_df.drop(columns=['Timestamp'], inplace=True)
+
+        proto_labels_df = proto_df.groupby(level='node_id').agg({'label': 'last'})
+        proto_labels_df.index = pd.MultiIndex.from_product([proto_labels_df.index, [0]], names=['node_id', 'timestamp'])
+
+        proto_df.drop(columns=['Timestamp', 'label'], inplace=True)
+
+        proto_ts, proto_labels = data_loading.process_data(proto_df, proto_labels_df)
+        # self._pred_dist(distractor)
+        return proto_ts, proto_labels
+
     def explain(self, x_test, to_maximize=None, num_features=10,return_dist=False, savefig=False):
         orig_preds = self.clf.predict_proba(x_test)
         orig_label = np.argmax(orig_preds)
@@ -485,9 +297,7 @@ class BruteForceSearch(BaseExplanation):
         if not self.silent:
             logging.info("Working on turning label from %s to %s",
                          orig_label, to_maximize)
-        # distractors = self._get_distractors(
-        #     x_test, to_maximize, n_distractors=self.num_distractors)
-        distractors, proto_ts, proto_labels = self._get_recourse_distractors(
+        distractors = self._get_distractors(
             x_test, to_maximize, n_distractors=self.num_distractors)
         best_explanation = set()
         best_explanation_score = 0
@@ -526,207 +336,5 @@ class BruteForceSearch(BaseExplanation):
                 explanation.append(best_column)
 
         if not return_dist:
-            return explanation, proto_ts, proto_labels
-        else:
-            return explanation, best_dist
-
-
-class LossDiscreteState:
-
-    def __init__(self, label_idx, clf, x_test, distractor, cols_swap, reg,
-                 max_features=3, maximize=True):
-        self.target = label_idx
-        self.clf = clf
-        self.x_test = x_test
-        self.reg = reg
-        self.distractor = distractor
-        self.cols_swap = cols_swap  # Column names that we can swap
-        self.prob_type = 'discrete'
-        self.max_features = 3 if max_features is None else max_features
-        self.maximize = maximize
-
-    def __call__(self, feature_matrix):
-        return self.evaluate(feature_matrix)
-
-    def evaluate(self, feature_matrix):
-
-        new_case = self.x_test.copy()
-        assert len(self.cols_swap) == len(feature_matrix)
-
-        # If the value is one, replace from distractor
-        for col_replace, a in zip(self.cols_swap, feature_matrix):
-            if a == 1:
-                new_case[col_replace] = self.distractor[col_replace].values
-
-        replaced_feature_count = np.sum(feature_matrix)
-
-        # if replaced_feature_count > self.max_features:
-        #     feature_loss = 1
-        #     loss_pred = 1
-        # else:
-        # Will return the prob of the other class
-        result = self.clf.predict_proba(new_case)[0][self.target]
-        feature_loss = self.reg * np.maximum(0, replaced_feature_count - self.max_features)
-        loss_pred = np.square(np.maximum(0, 0.95 - result))
-
-        loss_pred = loss_pred + feature_loss
-
-        return -loss_pred if self.maximize else loss_pred
-
-    def get_prob_type(self):
-        """ Return the problem type."""
-
-        return self.prob_type
-
-
-class OptimizedSearch(BaseExplanation):
-
-    def __init__(self, clf, timeseries, labels, **kwargs):
-        super().__init__(clf, timeseries, labels, **kwargs)
-        self.discrete_state = False
-        self.backup = BruteForceSearch(clf, timeseries, labels, **kwargs)
-
-    def opt_Discrete(self, to_maximize, x_test, dist, columns, init,
-                     max_attempts, maxiter, num_features=None):
-
-        fitness_fn = LossDiscreteState(
-            to_maximize,
-            self.clf, x_test, dist,
-            columns, reg=0.8, max_features=num_features,
-            maximize=False
-        )
-        # problem = mlrose.DiscreteOpt(
-        #     length=len(columns), fitness_fn=fitness_fn,
-        #     maximize=False, max_val=2)
-        # best_state, best_fitness = mlrose.random_hill_climb(
-        #     problem,
-        #     max_attempts=max_attempts,
-        #     max_iters=maxiter,
-        #     init_state=init,
-        #     restarts = 5,
-        # )
-
-        self.discrete_state = True
-        return init
-
-    def _prune_explanation(self, explanation, x_test, dist,
-                           to_maximize, max_features=None):
-        if max_features is None:
-            max_features = len(explanation)
-        short_explanation = set()
-        while len(short_explanation) < max_features:
-            modified = x_test.copy()
-            for c in short_explanation:
-                modified[c] = dist[c].values
-            prev_proba = self.clf.predict_proba(modified)[0][to_maximize]
-            best_col = None
-            best_diff = 0
-            for c in explanation:
-                tmp = modified.copy()
-                tmp[c] = dist[c].values
-                cur_proba = self.clf.predict_proba(tmp)[0][to_maximize]
-                if cur_proba - prev_proba > best_diff:
-                    best_col = c
-                    best_diff = cur_proba - prev_proba
-            if best_col is None:
-                break
-            else:
-                short_explanation.add(best_col)
-        return short_explanation
-
-    def explain(self, x_test, num_features=None, to_maximize=None, return_dist = False, savefig=False):
-        # num_feature is maximum number of features
-        orig_preds = self.clf.predict_proba(x_test)
-        orig_label = np.argmax(orig_preds)
-
-        #binary classification
-        if to_maximize is None:
-            to_maximize = np.argmin(orig_preds)
-
-        if orig_label == to_maximize:
-            return []
-        if not self.silent:
-            logging.info("Working on turning label from %s to %s",
-                         self.clf.classes_[orig_label],
-                         self.clf.classes_[to_maximize])
-
-        explanation = self._get_explanation(
-            x_test, to_maximize, num_features, return_dist, savefig=savefig)
-        if not explanation:
-            logging.info("Used greedy search for %s",
-                         x_test.index.get_level_values('node_id')[0])
-            explanation = self.backup.explain(x_test, num_features=num_features,
-                                              to_maximize=to_maximize, return_dist=return_dist, savefig=savefig)
-
-        return explanation
-
-    def _get_explanation(self, x_test, to_maximize, num_features, return_dist=False, savefig=False):
-        distractors = self._get_distractors(
-            x_test, to_maximize, n_distractors=self.num_distractors)
-
-        # Avoid constructing KDtrees twice
-        self.backup.per_class_trees = self.per_class_trees
-        self.backup.per_class_node_indices = self.per_class_node_indices
-
-        best_explanation = set()
-        best_explanation_score = 0
-
-        for count, dist in enumerate(distractors):
-
-            if not self.silent:
-                logging.info("Trying distractor %d / %d",
-                             count + 1, self.num_distractors)
-
-            columns = [
-                c for c in dist.columns
-                if np.any(dist[c].values != x_test[c].values)
-            ]
-
-            # Init options
-            init = [0] * len(columns)
-
-            result = self.opt_Discrete(
-                to_maximize, x_test, dist, columns, init=init,
-                max_attempts=1000, maxiter=1000, num_features=num_features)
-
-            if not self.discrete_state:
-                explanation = {
-                    x for idx, x in enumerate(columns)
-                    if idx in np.nonzero(result.x)[0]
-                }
-            else:
-                explanation = {
-                    x for idx, x in enumerate(columns)
-                    if idx in np.nonzero(result)[0]
-                }
-
-            explanation = self._prune_explanation(
-                explanation, x_test, dist, to_maximize, max_features=num_features)
-
-            modified = x_test.copy()
-
-            for c in columns:
-                if c in explanation:
-                    modified[c] = dist[c].values
-
-            probas = self.clf.predict_proba(modified)
-
-            if not self.silent:
-                logging.info("Current probas: %s", probas)
-
-            if np.argmax(probas) == to_maximize:
-                current_best = np.max(probas)
-                if current_best > best_explanation_score:
-                    best_explanation = explanation
-                    best_explanation_score = current_best
-                    best_modified = modified
-                    best_dist = dist
-
-        if not self.silent and len(best_explanation) != 0:
-            for metric in best_explanation:
-                self._plot_changed(metric, x_test, best_dist, savefig=savefig)
-
-        if return_dist == False or len(best_explanation) == 0:
-            return best_explanation
-        else:
-            return best_explanation, best_dist
+            return explanation
+        return explanation, best_dist
